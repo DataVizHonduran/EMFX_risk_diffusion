@@ -68,6 +68,10 @@ combined_df.sort_index(inplace=True)
 # This creates a DataFrame where columns are just the tickers (MXN, BRL, etc.)
 df_close = combined_df.xs('close', axis=1, level=1)
 
+# Save raw FX close prices to CSV (USDXXX quotes)
+df_close.to_csv('fx_data_raw.csv')
+print(f"Saved raw FX data to fx_data_raw.csv ({df_close.shape[0]} rows, {df_close.shape[1]} currencies)")
+
 print("Data fetch complete. Running analysis...")
 
 # --- 2. RUN ANALYSIS ---
@@ -79,6 +83,10 @@ emfx = ['MXN','CLP', 'BRL', 'COP', 'PEN',
 # Filter and inverse quote (Assuming underlying data is USDXXX, we want XXXUSD strength context)
 # We use df_close here
 df_em = 1 / df_close[emfx].bfill().ffill().loc["2014-11-01":]
+
+# Save processed EM FX data to CSV (inverted quotes, XXXUSD, from 2014-11-01)
+df_em.to_csv('fx_data_emfx.csv')
+print(f"Saved processed EM FX data to fx_data_emfx.csv ({df_em.shape[0]} rows, {df_em.shape[1]} currencies)")
 
 window = 252
 threshold = 0.05
