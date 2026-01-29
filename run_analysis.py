@@ -82,7 +82,8 @@ emfx = ['MXN','CLP', 'BRL', 'COP', 'PEN',
 
 # Filter and inverse quote (Assuming underlying data is USDXXX, we want XXXUSD strength context)
 # We use df_close here
-df_em = 1 / df_close[emfx].bfill().ffill().loc["2014-11-01":]
+existing_emfx = [c for c in emfx if c in df_close.columns]
+df_em = 1 / df_close[existing_emfx].bfill().ffill().loc["2014-11-01":]
 
 # Save processed EM FX data to CSV (inverted quotes, XXXUSD, from 2014-11-01)
 df_em.to_csv('fx_data_emfx.csv')
