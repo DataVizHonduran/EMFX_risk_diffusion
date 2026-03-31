@@ -30,10 +30,23 @@ jobs:
           ALPHA_VANTAGE_KEY: ${{ secrets.ALPHA_VANTAGE_KEY }}
         run: python run_analysis.py
 
-      - name: Commit and Push
+      - name: Commit data files to source repo
         run: |
           git config --global user.name "GitHub Actions"
           git config --global user.email "actions@github.com"
-          git add index.html fx_data_raw.csv fx_data_emfx.csv
-          git commit -m "Update charts and FX data CSVs" || echo "No changes to commit"
+          git add fx_data_raw.csv fx_data_emfx.csv
+          git diff --staged --quiet || git commit -m "Update FX data CSVs"
+          git push
+
+      - name: Push HTML to boquin.github.io
+        run: |
+          git clone https://x-access-token:${{ secrets.BOQUIN_DEPLOY_TOKEN }}@github.com/DataVizHonduran/boquin.github.io.git _boquin
+          mkdir -p _boquin/reports/emfx-risk-diffusion
+          cp index.html _boquin/reports/emfx-risk-diffusion/index.html
+          cd _boquin
+          git config user.email "action@github.com"
+          git config user.name "GitHub Action"
+          git add reports/emfx-risk-diffusion/
+          git diff --staged --quiet || git commit -m "Update EMFX risk diffusion - $(date +'%Y-%m-%d')"
+          git pull --rebase
           git push
