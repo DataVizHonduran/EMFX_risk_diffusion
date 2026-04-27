@@ -6,88 +6,87 @@ import plotly.graph_objects as go
 import plotly.io as pio
 from scipy.signal import savgol_filter
 
-# --- 1. FETCH DATA (Alpha Vantage) ---
-# We retrieve the key from the environment variable for security
-api_key = os.environ.get("ALPHA_VANTAGE_KEY")
+# --- 1. FETCH DATA ---
 
-if not api_key:
-    raise ValueError("API Key not found. Make sure ALPHA_VANTAGE_KEY is set in GitHub Secrets.")
-
-nsize = "full"
-symbols = [
+# Frankfurter (ECB): batch, 1 call, no key required
+FRANKFURTER_SYMBOLS = [
     "EUR", "AUD", "CAD", "GBP", "JPY", "SEK", "NOK", "NZD", "CHF",
-    "MXN", "CLP", "BRL", "COP", "PEN",
-    "KRW", "IDR", "INR", "THB", "PHP", "SGD",
+    "MXN", "BRL", "KRW", "IDR", "INR", "THB", "PHP", "SGD",
     "PLN", "HUF", "CZK", "ZAR", "TRY"
 ]
 
-data_dict = {}
+# Alpha Vantage: only for currencies ECB doesn't carry
+AV_SYMBOLS = ["CLP", "COP", "PEN"]
 
-print("Starting API Fetch loop...")
+print("Fetching FX data from Frankfurter (ECB)...")
+resp = requests.get(
+    "https://api.frankfurter.dev/v1/2014-11-01..",
+    params={"from": "USD", "to": ",".join(FRANKFURTER_SYMBOLS)},
+    timeout=60
+)
+resp.raise_for_status()
+rates = resp.json()["rates"]
+df_frankfurter = pd.DataFrame.from_dict(rates, orient="index")
+df_frankfurter.index = pd.to_datetime(df_frankfurter.index)
+df_frankfurter.sort_index(inplace=True)
+print(f"Frankfurter: {df_frankfurter.shape[0]} rows, {df_frankfurter.shape[1]} currencies")
 
-for symbol in symbols:
-    print(f"Fetching USD/{symbol}...")
-    url = "https://www.alphavantage.co/query"
-    params = {
-        "function": "FX_DAILY",
-        "from_symbol": "USD",
-        "to_symbol": symbol,
-        "outputsize": nsize,
-        "apikey": api_key
-    }
+# Alpha Vantage for CLP, COP, PEN
+api_key = os.environ.get("ALPHA_VANTAGE_KEY")
+av_frames = {}
 
-    try:
-        response = requests.get(url, params=params)
-        data = response.json()
-        
-        if "Time Series FX (Daily)" in data:
-            ts = data['Time Series FX (Daily)']
-            df_temp = pd.DataFrame.from_dict(ts, orient='index')
-            df_temp.index = pd.to_datetime(df_temp.index)
-            df_temp.columns = ['open', 'high', 'low', 'close']
-            df_temp = df_temp.astype(float)
-            
-            # Store in dict
-            for col in df_temp.columns:
-                data_dict[(symbol, col)] = df_temp[col]
-        else:
-            print(f"Error fetching {symbol}: {data.get('Note') or data.get('Error Message')}")
-            
-    except Exception as e:
-        print(f"Exception for {symbol}: {e}")
-    
-    # Respect API rate limits (Standard free tier is 5 calls/min)
-    time.sleep(15)
+if api_key:
+    for symbol in AV_SYMBOLS:
+        print(f"Fetching USD/{symbol} from Alpha Vantage...")
+        try:
+            r = requests.get(
+                "https://www.alphavantage.co/query",
+                params={
+                    "function": "FX_DAILY",
+                    "from_symbol": "USD",
+                    "to_symbol": symbol,
+                    "outputsize": "full",
+                    "apikey": api_key
+                },
+                timeout=30
+            )
+            d = r.json()
+            if "Time Series FX (Daily)" in d:
+                ts = d["Time Series FX (Daily)"]
+                df_temp = pd.DataFrame.from_dict(ts, orient="index")
+                df_temp.index = pd.to_datetime(df_temp.index)
+                df_temp = df_temp["4. close"].astype(float).rename(symbol)
+                av_frames[symbol] = df_temp
+            else:
+                print(f"Error fetching {symbol}: {d.get('Note') or d.get('Information') or d.get('Error Message')}")
+        except Exception as e:
+            print(f"Exception for {symbol}: {e}")
+        time.sleep(15)
+else:
+    print("ALPHA_VANTAGE_KEY not set — skipping CLP, COP, PEN")
 
-# Combine into MultiIndex DataFrame
-combined_df = pd.DataFrame(data_dict)
-combined_df.columns = pd.MultiIndex.from_tuples(combined_df.columns)
-combined_df.sort_index(inplace=True)
+# Merge Frankfurter + AV into single close-price DataFrame
+df_close = df_frankfurter.copy()
+for sym, series in av_frames.items():
+    df_close[sym] = series
+df_close.sort_index(inplace=True)
 
-# Extract only 'close' prices for the analysis to keep math simple
-# This creates a DataFrame where columns are just the tickers (MXN, BRL, etc.)
-df_close = combined_df.xs('close', axis=1, level=1)
-
-# Save raw FX close prices to CSV (USDXXX quotes)
-df_close.to_csv('fx_data_raw.csv')
-print(f"Saved raw FX data to fx_data_raw.csv ({df_close.shape[0]} rows, {df_close.shape[1]} currencies)")
+df_close.to_csv("fx_data_raw.csv")
+print(f"Saved fx_data_raw.csv: {df_close.shape[0]} rows, {df_close.shape[1]} currencies")
 
 print("Data fetch complete. Running analysis...")
 
 # --- 2. RUN ANALYSIS ---
 
-emfx = ['MXN','CLP', 'BRL', 'COP', 'PEN',
+emfx = ['MXN', 'CLP', 'BRL', 'COP', 'PEN',
         'KRW', 'IDR', 'INR', 'THB', 'PHP', 'SGD',
         'PLN', 'HUF', 'CZK', 'ZAR', 'TRY']
 
-# Filter and inverse quote (Assuming underlying data is USDXXX, we want XXXUSD strength context)
-# We use df_close here
 existing_emfx = [c for c in emfx if c in df_close.columns]
 df_em = 1 / df_close[existing_emfx].bfill().ffill().loc["2014-11-01":]
 
-# Save processed EM FX data to CSV (inverted quotes, XXXUSD, from 2014-11-01)
-df_em.to_csv('fx_data_emfx.csv')
-print(f"Saved processed EM FX data to fx_data_emfx.csv ({df_em.shape[0]} rows, {df_em.shape[1]} currencies)")
+df_em.to_csv("fx_data_emfx.csv")
+print(f"Saved fx_data_emfx.csv: {df_em.shape[0]} rows, {df_em.shape[1]} currencies")
 
 window = 252
 threshold = 0.05
@@ -100,26 +99,24 @@ for i in range(window, len(df_em)):
     latest_prices = slice_df.iloc[-1]
     latest_highs = highs.iloc[-1]
     latest_lows = lows.iloc[-1]
-    
+
     near_high = (latest_highs - latest_prices) / latest_highs <= threshold
     near_low = (latest_prices - latest_lows) / latest_lows <= threshold
-    
+
     count_high = near_high.sum()
     count_low = near_low.sum()
     total = df_em.shape[1]
-    
+
     diffusion_index = (count_high - count_low) / total
     diffusion_data.append((slice_df.index[-1], diffusion_index))
 
 diffusion_df = pd.DataFrame(diffusion_data, columns=["Date", "Diffusion"]).set_index("Date")
 diffusion_df["Smoothed"] = savgol_filter(diffusion_df["Diffusion"], 11, 3)
 
-# Calculate Trend
 em_fx = df_em.mean(axis=1)
 em_fx = em_fx / em_fx.iloc[0] * 100
 trend = em_fx - em_fx.rolling(100).mean()
 
-# Signal Logic
 signal = pd.Series(index=diffusion_df.index, dtype='float64')
 for date in diffusion_df.index:
     if date not in trend: continue
