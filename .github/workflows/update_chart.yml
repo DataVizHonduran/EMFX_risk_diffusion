@@ -39,8 +39,11 @@ jobs:
           git push
 
       - name: Push HTML to boquin.github.io
+        env:
+          BOQUIN_TOKEN: ${{ secrets.BOQUIN_DEPLOY_TOKEN }}
         run: |
-          git clone https://x-access-token:${{ secrets.BOQUIN_DEPLOY_TOKEN }}@github.com/DataVizHonduran/boquin.github.io.git _boquin
+          CLEAN_TOKEN=$(echo "${BOQUIN_TOKEN}" | tr -d '[:space:]')
+          git clone https://x-access-token:${CLEAN_TOKEN}@github.com/DataVizHonduran/boquin.github.io.git _boquin
           mkdir -p _boquin/reports/emfx-risk-diffusion
           cp index.html _boquin/reports/emfx-risk-diffusion/index.html
           cd _boquin
